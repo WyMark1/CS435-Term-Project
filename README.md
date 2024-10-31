@@ -1,6 +1,8 @@
 # CS435-Term-Project
 This is a repository for our CS435 term project
 
+When you first pull these files you will need to run chmod +x *.sh for them to be 
+executable 
 
 The Compile.sh bash file compiles the project into a jar and puts it into hadoop
 for this to work you need a to have a directory called CS435-Term-Project at root
