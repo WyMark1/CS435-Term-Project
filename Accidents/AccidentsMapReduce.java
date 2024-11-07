@@ -17,6 +17,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.BytesWritable;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.MapWritable;
+import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
@@ -37,33 +38,79 @@ import java.util.HashSet;
 import org.apache.log4j.Logger;
 import java.util.Map;
 import java.lang.Math;
-
+import Accidents.MapperWriteable;
 
 public class AccidentsMapReduce extends Configured implements Tool {
 	
-	public static class getAveragesMapper extends Mapper<Object, BytesWritable, Text, Text> {
+	public static class getAveragesMapper extends Mapper<LongWritable, Text, IntWritable, MapperWriteable> {
 		
-		public void map(Object key, BytesWritable bWriteable, Context context)
+		public void map(LongWritable key, Text text, Context context)
+				throws IOException, InterruptedException {
+				String rawText = text.toString();
+				String[] lines = rawText.split("\\r?\\n\\r?\\n");
+				int[] keptCols = {20,21,22,23,24,26,27,29,31,33,35,37,38,40};
+				double[][] averages = new double[5][14];
+				int[][] counts = new int[5][14];
+				for (String line : lines) {
+					String[] cols = line.split(",");
+					if (cols[2].equals("") || cols[2].length() > 1) break;
+					int severity = Integer.parseInt(cols[2]);
+					for (int i = 0; i < keptCols.length; i++) {
+						String val = cols[keptCols[i]].toLowerCase();
+						double value = 0.0;
+						if (!val.equals("")) {
+							if (val.equals("true")) value = 1.0;
+							else if (val.equals("false")) value = 0.0;
+							else value  = Double.parseDouble(val);
+							averages[severity][i] += value;
+							averages[0][i] += value;
+							counts[severity][i] += 1;
+							counts[0][i] += 1;
+						} 
+					}
+				}
+
+				for (int i = 0; i < 5; i++) {
+					IntWritable count = new IntWritable(i);
+					MapperWriteable values = new MapperWriteable(averages[i], counts[i]);
+					context.write(count, values);
+				}
+		}
+
+	}
+
+	public static class getTopNMapper extends Mapper<LongWritable, Text, Text, Text> {
+		
+		public void map(LongWritable key, Text text, Context context)
 				throws IOException, InterruptedException {
 			//TODO
 		}
 
 	}
 
-	public static class getTopNMapper extends Mapper<Object, BytesWritable, Text, Text> {
+	public static class AveragesReducer extends Reducer<IntWritable, MapperWriteable, IntWritable, Text> {
 		
-		public void map(Object key, BytesWritable bWriteable, Context context)
+		public void reduce(IntWritable key, Iterable<MapperWriteable> values, Context context)
 				throws IOException, InterruptedException {
-			//TODO
-		}
+				double[] averages = new double[14];
+				int[] counts = new int[14];
+				for (MapperWriteable value : values) {
+					double[] cols = value.getValues();
+					int[] count = value.getCount();
+					for (int i = 0; i < cols.length; i++) {
+						averages[i] += cols[i];
+						counts[i] += count[i];
+					}
+					
+				}
 
-	}
+				String finalVals = "";
+				for(int i = 0; i < counts.length; i++) {
+					finalVals += (averages[i]/counts[i]) + ", ";
+				}
 
-	public static class AveragesReducer extends Reducer<Text, Text, Text, Text /*TODO*/> {
-		
-		public void reduce(Text text1, Iterable<Text> text2, Context context /*TODO*/)
-				throws IOException, InterruptedException {
-			//TODO
+				Text output = new Text(finalVals);
+				context.write(key, output);
 		}
 	}
 
@@ -84,8 +131,10 @@ public class AccidentsMapReduce extends Configured implements Tool {
 		job1.setMapperClass(getAveragesMapper.class);
 		job1.setReducerClass(AveragesReducer.class);
 
-		job1.setOutputKeyClass(Text.class); //May need to change
-		job1.setOutputValueClass(Text.class); //May need to change
+		job1.setMapOutputKeyClass(IntWritable.class);
+		job1.setMapOutputValueClass(MapperWriteable.class);
+		job1.setOutputKeyClass(IntWritable.class); 
+		job1.setOutputValueClass(Text.class);
 
 		FileInputFormat.addInputPath(job1, new Path(inputDir));
 		FileOutputFormat.setOutputPath(job1, new Path(outputDir1));
@@ -104,7 +153,7 @@ public class AccidentsMapReduce extends Configured implements Tool {
 		job2.setOutputKeyClass(Text.class); //May need to change
 		job2.setOutputValueClass(Text.class); //May need to change
 
-		FileInputFormat.addInputPath(job2, new Path(outputDir1));
+		FileInputFormat.addInputPath(job2, new Path(inputDir));
 		FileOutputFormat.setOutputPath(job2, new Path(outputDir2));
 
 		if(!job2.waitForCompletion(true)) {
