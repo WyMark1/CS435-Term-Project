@@ -14,3 +14,11 @@ need the directories /CS435-Term-Project/Data and /CS435-Term-Project/Data_sampl
 /CS435-Term-Project/output to exist
 
 The Delete.sh will delete the output contents of the output directory so you can run a job
+
+Inside of RFM is the random forest model you can simpily compile it using the compile command
+inside of forest. You will have to rerun chmod +x *.sh once inside for it to work.
+To run it you shouldn't have to change anything so long as you have the data files in the
+struture described above. The run command will ask for your spark master node and port 
+as well as your hadoop port. Then you can choose to Train the model or Test it. 
+Training it will still test it but Test won't train. You will have to train a model
+before you can run the test. 
