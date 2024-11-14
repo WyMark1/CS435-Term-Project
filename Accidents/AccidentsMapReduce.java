@@ -40,9 +40,13 @@ import java.util.Map;
 import java.lang.Math;
 import Accidents.MapperWriteable;
 
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.IOException;
+
 public class AccidentsMapReduce extends Configured implements Tool {
 	
-	public static class getAveragesMapper extends Mapper<LongWritable, Text, IntWritable, MapperWriteable> {
+	public static class getAveragesMapper extends Mapper<LongWritable, Text, Text, MapperWriteable> {
 		
 		public void map(LongWritable key, Text text, Context context)
 				throws IOException, InterruptedException {
@@ -71,7 +75,7 @@ public class AccidentsMapReduce extends Configured implements Tool {
 				}
 
 				for (int i = 0; i < 5; i++) {
-					IntWritable count = new IntWritable(i);
+					Text count = new Text(i + "");
 					MapperWriteable values = new MapperWriteable(averages[i], counts[i]);
 					context.write(count, values);
 				}
@@ -80,17 +84,66 @@ public class AccidentsMapReduce extends Configured implements Tool {
 	}
 
 	public static class getTopNMapper extends Mapper<LongWritable, Text, Text, Text> {
+		private double[][] severityAverages = new double[5][14]; // [severity][feature]
+
+		@Override
+		protected void setup(Context context) throws IOException, InterruptedException {
+			// Load averages from the distributed cache into the 2D averages array
+			Path[] cacheFiles = context.getLocalCacheFiles();
+			if (cacheFiles != null && cacheFiles.length > 0) {
+				for (Path cachePath : cacheFiles) {
+					try (BufferedReader reader = new BufferedReader(new FileReader(cachePath.toString()))) {
+						String line;
+						while ((line = reader.readLine()) != null) {
+							String[] tokens = line.split("\t");
+							int severity = Integer.parseInt(tokens[0]);
+							String[] avgValues = tokens[1].split(", ");
+							
+							for (int i = 0; i < avgValues.length; i++) { // Populate averages row
+								severityAverages[severity][i] = Double.parseDouble(avgValues[i]);
+							}
+						}
+					}
+				}
+			}
+		}
 		
 		public void map(LongWritable key, Text text, Context context)
 				throws IOException, InterruptedException {
-			//TODO
+			String line = text.toString();
+			String[] cols = line.split(",");
+
+			if (cols[2].equals("") || cols[2].length() > 1) return; // Check proper severity level entry
+			int severity = Integer.parseInt(cols[2]);
+
+			int[] keptCols = {20, 21, 22, 23, 24, 26, 27, 29, 31, 33, 35, 37, 38, 40};
+			
+			double deviation = 0.0;
+			double globalDeviation = 0.0;
+
+			for (int i = 0; i < keptCols.length; i++) {
+				String val = cols[keptCols[i]].toLowerCase();
+				double value = 0.0;
+				if (!val.equals("")) { // Similar to getAverageMapper implementation
+					if (val.equals("true")) value = 1.0;
+					else if (val.equals("false")) value = 0.0;
+					else value = Double.parseDouble(val);
+
+					deviation += Math.abs(value - severityAverages[severity][i]); // Calculate deviation from average for the record's severity
+
+					globalDeviation += Math.abs(value - severityAverages[0][i]); // Calculate deviation from global averages
+				}
+			}
+
+			context.write(new Text("0"), new Text(globalDeviation + " -> " + line));
+			context.write(new Text(severity + ""), new Text(deviation + " -> " + line));
 		}
 
 	}
 
-	public static class AveragesReducer extends Reducer<IntWritable, MapperWriteable, IntWritable, Text> {
+	public static class AveragesReducer extends Reducer<Text, MapperWriteable, Text, Text> {
 		
-		public void reduce(IntWritable key, Iterable<MapperWriteable> values, Context context)
+		public void reduce(Text key, Iterable<MapperWriteable> values, Context context)
 				throws IOException, InterruptedException {
 				double[] averages = new double[14];
 				int[] counts = new int[14];
@@ -114,11 +167,40 @@ public class AccidentsMapReduce extends Configured implements Tool {
 		}
 	}
 
-    public static class TopNReducer extends Reducer<Text, Text, Text, Text /*TODO*/> {
+    public static class TopNReducer extends Reducer<Text, Text, Text, Text> {
+
+		int N = 20; // TOP N VALUE
 		
-		public void reduce(Text text1, Iterable<Text> text2, Context context /*TODO*/)
+		public void reduce(Text key, Iterable<Text> values, Context context)
 				throws IOException, InterruptedException {
-			//TODO
+			TreeMap<Text, Double> deviations = new TreeMap<>();
+
+
+			for (Text value : values) {
+
+				String[] parts = value.toString().split(" -> ");
+
+				String severity = key.toString();
+				double deviation = Double.parseDouble(parts[0]);
+				String line = parts[1];
+
+				deviations.put(new Text(line), deviation);
+
+				if (deviations.size() > N)
+					deviations.pollLastEntry();
+			}
+
+			if (key.toString().equals("0")) {
+				context.write(new Text("Global Top " + N + ":"), new Text());
+			} else {
+				context.write(new Text("Severity " + key + " Top " + N + ":"), new Text());
+			}
+			int i = 0;
+			for (Map.Entry<Text, Double> entry : deviations.entrySet()) {
+				if(i >= N) break;
+				context.write(new Text(entry.getKey()), new Text(entry.getValue() + ""));
+				i++;
+			}
 		}
 	}
 
@@ -131,9 +213,9 @@ public class AccidentsMapReduce extends Configured implements Tool {
 		job1.setMapperClass(getAveragesMapper.class);
 		job1.setReducerClass(AveragesReducer.class);
 
-		job1.setMapOutputKeyClass(IntWritable.class);
+		job1.setMapOutputKeyClass(Text.class);
 		job1.setMapOutputValueClass(MapperWriteable.class);
-		job1.setOutputKeyClass(IntWritable.class); 
+		job1.setOutputKeyClass(Text.class); 
 		job1.setOutputValueClass(Text.class);
 
 		FileInputFormat.addInputPath(job1, new Path(inputDir));
@@ -150,8 +232,11 @@ public class AccidentsMapReduce extends Configured implements Tool {
 		job2.setMapperClass(getTopNMapper.class);
 		job2.setReducerClass(TopNReducer.class);
 
+		// Explicitly set the number of reducers to 1 for TopNReducer
+		job2.setNumReduceTasks(1);
+
 		job2.setOutputKeyClass(Text.class); //May need to change
-		job2.setOutputValueClass(Text.class); //May need to change
+		job2.setOutputValueClass(Text.class); // May need to change
 
 		FileInputFormat.addInputPath(job2, new Path(inputDir));
 		FileOutputFormat.setOutputPath(job2, new Path(outputDir2));
