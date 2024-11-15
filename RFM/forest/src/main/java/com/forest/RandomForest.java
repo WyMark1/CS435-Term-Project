@@ -2,36 +2,53 @@ package com.forest;
 
 import java.io.IOException;
 import java.nio.file.Paths;
+import java.util.Collections;
+import java.util.TreeMap;
 import java.nio.file.Files;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.types.StructType;
+import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
-import org.apache.spark.ml.Pipeline;
-import org.apache.spark.ml.PipelineModel;
-import org.apache.spark.ml.PipelineStage;
+import org.apache.spark.sql.RowFactory;
 import org.apache.spark.ml.classification.RandomForestClassifier;
 import org.apache.spark.ml.evaluation.MulticlassClassificationEvaluator;
 import org.apache.spark.ml.feature.VectorAssembler;
-import org.apache.spark.ml.feature.StringIndexer;
+import org.apache.spark.ml.param.ParamMap;
+import org.apache.spark.ml.classification.RandomForestClassificationModel;
+import org.apache.spark.ml.tuning.CrossValidator;
+import org.apache.spark.ml.tuning.CrossValidatorModel;
+import org.apache.spark.ml.tuning.ParamGridBuilder;
+import org.apache.spark.ml.linalg.Vector;
 
 public class RandomForest {
+
+    public static void printData(String output, String mode, SparkSession spark, String filename) {
+        System.out.println(output);
+
+        Dataset<Row> df = spark.createDataFrame(Collections.singletonList(RowFactory.create(output)),
+                                                new StructType().add("data", DataTypes.StringType, true));
+        df.write().mode(mode).text(filename);
+        
+    }
+
     public static void main(String[] args) {
         
+        String outFilename = args[2];
+
         SparkSession spark = SparkSession.builder()
                 .appName("RandomForest")
                 .getOrCreate();
 
-        //Format data
+        //Ingest and format data
         Dataset<Row> data = spark.read().format("csv")
                 .option("header", "true")
                 .option("inferSchema", "true")
                 .load(args[0]);
-
+        
         String labelCol = "Severity";
 
-        VectorAssembler assembler = new VectorAssembler()
-                .setHandleInvalid("skip")
-                .setInputCols(new String[]{
+        String[] inputAttributes = new String[]{
                 "Temperature(F)",     // Column 20
                 "Wind_Chill(F)",      // Column 21
                 "Humidity(%)",        // Column 22
@@ -46,45 +63,91 @@ public class RandomForest {
                 "Station",            // Column 37
                 "Stop",               // Column 38
                 "Traffic_Calming"     // Column 40
-                }).setOutputCol("features");
+                };
 
+        VectorAssembler assembler = new VectorAssembler()
+                .setHandleInvalid("skip")
+                .setInputCols(inputAttributes).setOutputCol("features");
 
-        RandomForestClassifier rf = new RandomForestClassifier()
-                .setLabelCol(labelCol)
-                .setFeaturesCol("features")
-                .setNumTrees(10);  //Can change this
+        Dataset<Row> processedData = assembler.transform(data);
 
-        Pipeline pipeline = new Pipeline()
-                .setStages(new PipelineStage[]{assembler, rf});
+        // Split data into train and test datasets
+        double trainRatio = 0.7;
+        double testRatio = 0.3;
 
-        Dataset<Row>[] splits = data.randomSplit(new double[]{0.7, 0.3}, 1234); // Can also make a validation set
+        String output = "Splitting dataset: " + trainRatio + " Train and " + testRatio + " Test\n";
+        printData(output, "overwrite", spark, outFilename);
+
+        Dataset<Row>[] splits = processedData.randomSplit(new double[]{trainRatio, testRatio}); // Can also make a validation set
         Dataset<Row> trainingData = splits[0];
         Dataset<Row> testData = splits[1];
-        
-        PipelineModel model = pipeline.fit(trainingData);
 
-        //Save model
-        try {
-            System.out.println("Saving model to : " + Paths.get(args[1]));
-            Files.deleteIfExists(Paths.get(args[1])); //Overwrite
-            model.save(args[1]);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-
-        //Evalutate 
-        Dataset<Row> predictions = model.transform(testData);
+        // Build model
+        RandomForestClassifier rf = new RandomForestClassifier()
+        .setLabelCol(labelCol)
+        .setFeaturesCol("features");
 
         MulticlassClassificationEvaluator evaluator = new MulticlassClassificationEvaluator()
                 .setLabelCol(labelCol)
                 .setPredictionCol("prediction")
                 .setMetricName("accuracy");
 
-        double accuracy = evaluator.evaluate(predictions);
-        System.out.println("Test Accuracy = " + accuracy);
+        ParamGridBuilder paramGrid = new ParamGridBuilder()
+                .addGrid(rf.numTrees(), new int[]{30,40})
+                .addGrid(rf.maxDepth(), new int[]{15});
 
-        
+        CrossValidator crossValidator = new CrossValidator()
+                .setEstimator(rf)
+                .setEvaluator(evaluator)
+                .setEstimatorParamMaps(paramGrid.build())
+                .setNumFolds(5);
+
+        output = "Training Random Forest model on training dataset with 5-fold cross-validation\n";
+        printData(output, "append", spark, outFilename);
+
+        // Train models and select best model
+        CrossValidatorModel model = crossValidator.fit(trainingData);
+
+        ParamMap[] pmap = model.getEstimatorParamMaps();
+        double[] metrics = model.avgMetrics();
+        for (int i=0; i<pmap.length; i++) {
+                output = "Parameter combination: " + pmap[i] + " has average cross-validation accuracy: " + metrics[i] + "\n";
+                printData(output, "append", spark, outFilename);
+        }
+
+        RandomForestClassificationModel rfcModel = (RandomForestClassificationModel) model.bestModel();
+
+        output = "\nThe best model has parameters: NumTrees = " + rfcModel.getNumTrees() 
+                        + ";  MaxDepth = " + rfcModel.getMaxDepth() + "\n";
+        printData(output, "append", spark, outFilename);
+
+
+        Vector tuple = rfcModel.featureImportances();
+        TreeMap<String,Double> featureImportance = new TreeMap<>();
+        for (int i=0; i < tuple.size(); i++) {
+                featureImportance.put(inputAttributes[i], tuple.apply(i));
+        }
+
+        output = "Attribute contributions: " + featureImportance + "\n";
+        printData(output, "append", spark, outFilename);
+
+        //Save model
+        try {
+            output = "Saving best random forest model to : " + Paths.get(args[1] + "\n");
+            printData(output, "append", spark, outFilename);
+            Files.deleteIfExists(Paths.get(args[1])); //Overwrite
+            model.save(args[1]);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        //Evalutate best model on Test dataset
+        Dataset<Row> predictions = model.transform(testData);
+
+        double accuracy = evaluator.evaluate(predictions);
+        output = "Accuracy of best random forest model on Test dataset is: " + accuracy + "\n";
+        printData(output, "append", spark, outFilename);
+
         spark.stop();
     }
 }
