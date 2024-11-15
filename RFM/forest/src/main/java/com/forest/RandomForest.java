@@ -30,6 +30,7 @@ public class RandomForest {
         String labelCol = "Severity";
 
         VectorAssembler assembler = new VectorAssembler()
+                .setHandleInvalid("skip")
                 .setInputCols(new String[]{
                 "Temperature(F)",     // Column 20
                 "Wind_Chill(F)",      // Column 21
@@ -64,6 +65,7 @@ public class RandomForest {
 
         //Save model
         try {
+            System.out.println("Saving model to : " + Paths.get(args[1]));
             Files.deleteIfExists(Paths.get(args[1])); //Overwrite
             model.save(args[1]);
         } catch (IOException e) {
