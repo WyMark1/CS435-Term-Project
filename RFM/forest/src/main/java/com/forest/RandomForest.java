@@ -94,7 +94,7 @@ public class RandomForest {
 
         ParamGridBuilder paramGrid = new ParamGridBuilder()
                 .addGrid(rf.numTrees(), new int[]{30,40})
-                .addGrid(rf.maxDepth(), new int[]{15});
+                .addGrid(rf.maxDepth(), new int[]{11,15});
 
         CrossValidator crossValidator = new CrossValidator()
                 .setEstimator(rf)
@@ -136,8 +136,10 @@ public class RandomForest {
             output = "Saving best random forest model to : " + Paths.get(args[1] + "\n");
             printData(output, "append", spark, outFilename);
             Files.deleteIfExists(Paths.get(args[1])); //Overwrite
-            model.save(args[1]);
+            model.write().overwrite().save(args[1]);
         } catch (IOException e) {
+            output = "Error saving best random forest model: " + e.toString();
+            printData(output, "append", spark, outFilename);
             e.printStackTrace();
         }
 
