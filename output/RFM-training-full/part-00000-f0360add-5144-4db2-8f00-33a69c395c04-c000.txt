@@ -1,0 +1,5 @@
+Parameter combination: {
+	rfc_d4ea949192e8-maxDepth: 15,
+	rfc_d4ea949192e8-numTrees: 40
+} has average cross-validation accuracy: 0.852536427009607
+

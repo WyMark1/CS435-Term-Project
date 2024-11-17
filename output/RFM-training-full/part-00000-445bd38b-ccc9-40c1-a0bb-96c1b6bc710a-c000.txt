@@ -1,0 +1,2 @@
+Accuracy of best random forest model on Test dataset is: 0.852544249613661
+
