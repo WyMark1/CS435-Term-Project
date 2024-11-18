@@ -1,6 +1,12 @@
 # CS435-Term-Project
-This is a repository for our CS435 term project
+This is a repository for AJ Leichner, Wyatt Markham, Mason Stencel, and Maya Swarup CS435 term project
+using the dataset found at [**DATASET**](https://www.kaggle.com/datasets/sobhanmoosavi/us-accidents)
 
+## What the project is about
+This project does two main things it calucates and retrives the top 10 most average data points from the *US Accidents (2016 - 2023)*
+data set. And there is a random forest model that can predict the severity of a crash. 
+
+## How to Run
 When you first pull these files you will need to run chmod +x *.sh for them to be 
 executable 
 
