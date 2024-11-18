@@ -51,7 +51,7 @@ public class AccidentsMapReduce extends Configured implements Tool {
 		public void map(LongWritable key, Text text, Context context)
 				throws IOException, InterruptedException {
 				String rawText = text.toString();
-				String[] lines = rawText.split("\\r?\\n\\r?\\n");
+				String[] lines = rawText.split("\\r?\\n");
 				int[] keptCols = {20,21,22,23,24,26,27,29,31,33,35,37,38,40};
 				double[][] averages = new double[5][14];
 				int[][] counts = new int[5][14];
